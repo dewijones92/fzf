@@ -597,6 +597,10 @@ func parseTheme(defaultTheme *tui.ColorTheme, str string) *tui.ColorTheme {
 				theme.Fg = ansi
 			case "bg":
 				theme.Bg = ansi
+			case "preview-fg":
+				theme.PreviewFg = ansi
+			case "preview-bg":
+				theme.PreviewBg = ansi
 			case "fg+":
 				theme.Current = ansi
 			case "bg+":
@@ -738,6 +742,10 @@ func parseKeymap(keymap map[int][]action, str string) {
 				appendAction(actEndOfLine)
 			case "cancel":
 				appendAction(actCancel)
+			case "clear-query":
+				appendAction(actClearQuery)
+			case "clear-selection":
+				appendAction(actClearSelection)
 			case "forward-char":
 				appendAction(actForwardChar)
 			case "forward-word":

@@ -224,10 +224,14 @@ func Run(opts *Options, revision string) {
 
 	// Event coordination
 	reading := true
+	clearCache := util.Once(false)
+	clearSelection := util.Once(false)
 	ticks := 0
 	var nextCommand *string
 	restart := func(command string) {
 		reading = true
+		clearCache = util.Once(true)
+		clearSelection = util.Once(true)
 		chunkList.Clear()
 		header = make([]string, 0, opts.HeaderLines)
 		go reader.restart(command)
@@ -250,20 +254,20 @@ func Run(opts *Options, revision string) {
 				switch evt {
 
 				case EvtReadNew, EvtReadFin:
-					clearCache := false
 					if evt == EvtReadFin && nextCommand != nil {
-						clearCache = true
 						restart(*nextCommand)
 						nextCommand = nil
+						break
 					} else {
 						reading = reading && evt == EvtReadNew
 					}
 					snapshot, count := chunkList.Snapshot()
 					terminal.UpdateCount(count, !reading, value.(*string))
 					if opts.Sync {
-						terminal.UpdateList(PassMerger(&snapshot, opts.Tac))
+						opts.Sync = false
+						terminal.UpdateList(PassMerger(&snapshot, opts.Tac), false)
 					}
-					matcher.Reset(snapshot, input(), false, !reading, sort, clearCache)
+					matcher.Reset(snapshot, input(), false, !reading, sort, clearCache())
 
 				case EvtSearchNew:
 					var command *string
@@ -279,9 +283,10 @@ func Run(opts *Options, revision string) {
 						} else {
 							restart(*command)
 						}
+						break
 					}
 					snapshot, _ := chunkList.Snapshot()
-					matcher.Reset(snapshot, input(), true, !reading, sort, command != nil)
+					matcher.Reset(snapshot, input(), true, !reading, sort, clearCache())
 					delay = false
 
 				case EvtSearchProgress:
@@ -291,7 +296,9 @@ func Run(opts *Options, revision string) {
 					}
 
 				case EvtHeader:
-					terminal.UpdateHeader(value.([]string))
+					header := value.([]string)
+					header = append(header, make([]string, opts.HeaderLines-len(header))...)
+					terminal.UpdateHeader(header)
 
 				case EvtSearchFin:
 					switch val := value.(type) {
@@ -321,7 +328,7 @@ func Run(opts *Options, revision string) {
 								terminal.startChan <- true
 							}
 						}
-						terminal.UpdateList(val)
+						terminal.UpdateList(val, clearSelection())
 					}
 				}
 			}

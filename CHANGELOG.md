@@ -1,8 +1,19 @@
 CHANGELOG
 =========
 
-0.19.1 (WIP)
+0.20.0 (WIP)
 ------
+- Customizable preview window color (`preview-fg` and `preview-bg` for `--color`)
+  ```sh
+  fzf --preview 'cat {}' \
+      --color 'fg:#bbccdd,fg+:#ddeeff,bg:#334455,preview-bg:#223344,border:#778899' \
+      --border --height 20 --layout reverse --info inline
+  ```
+- Removed the immediate flicking of the screen on `reload` action.
+  ```sh
+  : | fzf --bind 'change:reload:seq {q}' --phony
+  ```
+- Added `clear-query` and `clear-selection` actions for `--bind`
 - It is now possible to split a composite bind action over multiple `--bind`
   expressions by prefixing the later ones with `+`.
   ```sh
@@ -20,6 +31,10 @@ CHANGELOG
   ```sh
   fzf --multi --bind 'ctrl-l:select-all+execute(less {+f})+deselect-all'
   ```
+- Fixed bugs of reload action
+    - Not triggered when there's no match even when the command doesn't have
+      any placeholder expressions
+    - Screen not properly cleared when `--header-lines` not filled on reload
 
 0.19.0
 ------

@@ -185,6 +185,8 @@ const (
 	actBackwardWord
 	actCancel
 	actClearScreen
+	actClearQuery
+	actClearSelection
 	actDeleteChar
 	actDeleteCharEOF
 	actEndOfLine
@@ -493,10 +495,13 @@ func (t *Terminal) UpdateProgress(progress float32) {
 }
 
 // UpdateList updates Merger to display the list
-func (t *Terminal) UpdateList(merger *Merger) {
+func (t *Terminal) UpdateList(merger *Merger, reset bool) {
 	t.mutex.Lock()
 	t.progress = 100
 	t.merger = merger
+	if reset {
+		t.selected = make(map[int32]selectedItem)
+	}
 	t.mutex.Unlock()
 	t.reqBox.Set(reqInfo, nil)
 	t.reqBox.Set(reqList, nil)
@@ -619,7 +624,8 @@ func (t *Terminal) resizeWindows() {
 			marginInt[0]-1,
 			marginInt[3],
 			width,
-			height+2, tui.MakeBorderStyle(tui.BorderHorizontal, t.unicode))
+			height+2,
+			false, tui.MakeBorderStyle(tui.BorderHorizontal, t.unicode))
 	}
 	noBorder := tui.MakeBorderStyle(tui.BorderNone, t.unicode)
 	if previewVisible {
@@ -628,7 +634,7 @@ func (t *Terminal) resizeWindows() {
 			if !t.preview.border {
 				previewBorder = tui.MakeTransparentBorder()
 			}
-			t.pborder = t.tui.NewWindow(y, x, w, h, previewBorder)
+			t.pborder = t.tui.NewWindow(y, x, w, h, true, previewBorder)
 			pwidth := w - 4
 			// ncurses auto-wraps the line when the cursor reaches the right-end of
 			// the window. To prevent unintended line-wraps, we use the width one
@@ -636,28 +642,28 @@ func (t *Terminal) resizeWindows() {
 			if !t.preview.wrap && t.tui.DoesAutoWrap() {
 				pwidth += 1
 			}
-			t.pwindow = t.tui.NewWindow(y+1, x+2, pwidth, h-2, noBorder)
+			t.pwindow = t.tui.NewWindow(y+1, x+2, pwidth, h-2, true, noBorder)
 		}
 		switch t.preview.position {
 		case posUp:
 			pheight := calculateSize(height, t.preview.size, minHeight, 3)
 			t.window = t.tui.NewWindow(
-				marginInt[0]+pheight, marginInt[3], width, height-pheight, noBorder)
+				marginInt[0]+pheight, marginInt[3], width, height-pheight, false, noBorder)
 			createPreviewWindow(marginInt[0], marginInt[3], width, pheight)
 		case posDown:
 			pheight := calculateSize(height, t.preview.size, minHeight, 3)
 			t.window = t.tui.NewWindow(
-				marginInt[0], marginInt[3], width, height-pheight, noBorder)
+				marginInt[0], marginInt[3], width, height-pheight, false, noBorder)
 			createPreviewWindow(marginInt[0]+height-pheight, marginInt[3], width, pheight)
 		case posLeft:
 			pwidth := calculateSize(width, t.preview.size, minWidth, 5)
 			t.window = t.tui.NewWindow(
-				marginInt[0], marginInt[3]+pwidth, width-pwidth, height, noBorder)
+				marginInt[0], marginInt[3]+pwidth, width-pwidth, height, false, noBorder)
 			createPreviewWindow(marginInt[0], marginInt[3], pwidth, height)
 		case posRight:
 			pwidth := calculateSize(width, t.preview.size, minWidth, 5)
 			t.window = t.tui.NewWindow(
-				marginInt[0], marginInt[3], width-pwidth, height, noBorder)
+				marginInt[0], marginInt[3], width-pwidth, height, false, noBorder)
 			createPreviewWindow(marginInt[0], marginInt[3]+width-pwidth, pwidth, height)
 		}
 	} else {
@@ -665,7 +671,7 @@ func (t *Terminal) resizeWindows() {
 			marginInt[0],
 			marginInt[3],
 			width,
-			height, noBorder)
+			height, false, noBorder)
 	}
 	for i := 0; i < t.window.Height(); i++ {
 		t.window.MoveAndClear(i, 0)
@@ -1066,7 +1072,7 @@ func (t *Terminal) printPreview() {
 				if t.theme != nil && ansi != nil && ansi.colored() {
 					fillRet = t.pwindow.CFill(ansi.fg, ansi.bg, ansi.attr, str)
 				} else {
-					fillRet = t.pwindow.CFill(tui.ColNormal.Fg(), tui.ColNormal.Bg(), tui.AttrRegular, str)
+					fillRet = t.pwindow.CFill(tui.ColPreview.Fg(), tui.ColPreview.Bg(), tui.AttrRegular, str)
 				}
 				return fillRet == tui.FillContinue
 			})
@@ -1237,7 +1243,7 @@ func parsePlaceholder(match string) (bool, string, placeholderFlags) {
 	return false, matchWithoutFlags, flags
 }
 
-func hasPreviewFlags(template string) (plus bool, query bool) {
+func hasPreviewFlags(template string) (slot bool, plus bool, query bool) {
 	for _, match := range placeholder.FindAllString(template, -1) {
 		_, _, flags := parsePlaceholder(match)
 		if flags.plus {
@@ -1246,6 +1252,7 @@ func hasPreviewFlags(template string) (plus bool, query bool) {
 		if flags.query {
 			query = true
 		}
+		slot = true
 	}
 	return
 }
@@ -1409,7 +1416,7 @@ func (t *Terminal) currentItem() *Item {
 
 func (t *Terminal) buildPlusList(template string, forcePlus bool) (bool, []*Item) {
 	current := t.currentItem()
-	plus, query := hasPreviewFlags(template)
+	_, plus, query := hasPreviewFlags(template)
 	if !(query && len(t.input) > 0 || (forcePlus || plus) && len(t.selected) > 0) {
 		return current != nil, []*Item{current, current}
 	}
@@ -1904,6 +1911,15 @@ func (t *Terminal) Loop() {
 				}
 			case actClearScreen:
 				req(reqRedraw)
+			case actClearQuery:
+				t.input = []rune{}
+				t.cx = 0
+			case actClearSelection:
+				if t.multi > 0 {
+					t.selected = make(map[int32]selectedItem)
+					t.version++
+					req(reqList, reqInfo)
+				}
 			case actTop:
 				t.vset(0)
 				req(reqList)
@@ -2045,17 +2061,17 @@ func (t *Terminal) Loop() {
 				t.failed = nil
 
 				valid, list := t.buildPlusList(a.a, false)
-				// If the command template has {q}, we run the command even when the
-				// query string is empty.
 				if !valid {
-					_, query := hasPreviewFlags(a.a)
-					valid = query
+					// We run the command even when there's no match
+					// 1. If the template doesn't have any slots
+					// 2. If the template has {q}
+					slot, _, query := hasPreviewFlags(a.a)
+					valid = !slot || query
 				}
 				if valid {
 					command := replacePlaceholder(a.a,
 						t.ansi, t.delimiter, t.printsep, false, string(t.input), list)
 					newCommand = &command
-					t.selected = make(map[int32]selectedItem)
 				}
 			}
 			return true
@@ -2095,7 +2111,7 @@ func (t *Terminal) Loop() {
 
 		if queryChanged {
 			if t.isPreviewEnabled() {
-				_, q := hasPreviewFlags(t.preview.command)
+				_, _, q := hasPreviewFlags(t.preview.command)
 				if q {
 					t.version++
 				}
